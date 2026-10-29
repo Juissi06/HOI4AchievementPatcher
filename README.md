@@ -6,7 +6,7 @@ Lets Hearts of Iron IV grant achievements with checksum-changing mods, and optio
 
 | HOI4 version | Status |
 |--------------|--------|
-| 1.19.4.1     | Supported |
+| 1.19.4.1     | Supported, tested in a modded Ironman campaign |
 
 Other versions may work: the patch is found by byte pattern, not a fixed offset. Run `status` first; if it says
 `unknown game version`, that version is not supported yet and `patch` changes nothing.
