@@ -4,13 +4,15 @@ using System.Text.RegularExpressions;
 
 namespace HOI4AchievementPatcher;
 
-// Lets Hearts of Iron IV grant achievements with checksum-changing mods and without Ironman.
+// Lets Hearts of Iron IV grant achievements with checksum-changing mods, and optionally without Ironman.
 //
 // Two changes, each with a backup next to the original:
 //  1. hoi4.exe: the startup code compares the game checksum with the vanilla one and stores the result in the
 //     achievement manager (no match = no achievements). The `sete bl` after that compare becomes `mov bl, 1`.
-//  2. common/achievements.txt: every achievement's `possible` block requires `is_ironman = yes`; those lines are
-//     commented out. The is_ironman trigger itself is left alone, so events that check Ironman behave as before.
+//     This does not change the checksum itself, so multiplayer still works.
+//  2. common/achievements.txt (only with --remove-ironman): every achievement's `possible` block requires
+//     `is_ironman = yes`; those lines are commented out. The is_ironman trigger itself is left alone, so events
+//     that check Ironman behave as before. The file is part of the game checksum, so this breaks multiplayer.
 //
 // Cheats (console commands), difficulty, custom difficulty, start date and game rules still block achievements.
 // Only hoi4.exe and common/achievements.txt are touched; nothing else in the game folder is written.
@@ -35,13 +37,26 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        var code = Run(args);
+        // Started by double-click: keep the window open so the result can be read.
+        if (args.Length == 0 && !Console.IsInputRedirected)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Press any key to close.");
+            Console.ReadKey(true);
+        }
+        return code;
+    }
+
+    private static int Run(string[] args)
+    {
         var command = args.Length > 0 ? args[0].ToLowerInvariant() : "patch";
         if (command is "help" or "-h" or "--help" or "/?")
         {
             PrintHelp();
             return 0;
         }
-        var keepIronman = args.Contains("--keep-ironman");
+        var removeIronman = args.Contains("--remove-ironman");
         var gameDir = args.Skip(1).FirstOrDefault(a => !a.StartsWith("--")) ?? FindGameDir();
         if (gameDir == null || !File.Exists(Path.Combine(gameDir, ExeName)))
         {
@@ -56,14 +71,14 @@ internal static class Program
             switch (command)
             {
                 case "patch":
-                    EnsureGameClosed();
+                    EnsureGameClosed(gameDir);
                     PatchExe(gameDir);
-                    if (keepIronman) Console.WriteLine("achievements.txt: left alone (--keep-ironman)");
-                    else PatchAchievements(gameDir);
+                    if (removeIronman) PatchAchievements(gameDir);
+                    else Console.WriteLine("achievements.txt: left alone, Ironman still required (--remove-ironman changes that)");
                     Console.WriteLine("Done. Run the patcher again after every game update.");
                     return 0;
                 case "restore":
-                    EnsureGameClosed();
+                    EnsureGameClosed(gameDir);
                     Restore(Path.Combine(gameDir, ExeName));
                     Restore(Path.Combine(gameDir, AchievementsPath));
                     return 0;
@@ -85,13 +100,14 @@ internal static class Program
     private static void PrintHelp()
     {
         Console.WriteLine("""
-            HOI4AchievementPatcher [patch|restore|status] [game folder] [--keep-ironman]
+            HOI4AchievementPatcher [patch|restore|status] [game folder] [--remove-ironman]
 
-              patch    (default) allow achievements with mods and without Ironman; backups are kept
+              patch    (default) allow achievements with mods; a backup is kept
               restore  put the backed-up hoi4.exe and common/achievements.txt back
               status   show what is patched
 
-              --keep-ironman  only allow mods; Ironman stays required
+              --remove-ironman  also allow achievements without Ironman. This changes the game checksum,
+                                so you no longer match other players in multiplayer.
             """);
     }
 
@@ -183,10 +199,17 @@ internal static class Program
         Console.WriteLine($"{Path.GetFileName(path)}: restored");
     }
 
-    private static void EnsureGameClosed()
+    private static void EnsureGameClosed(string gameDir)
     {
-        if (Process.GetProcessesByName("hoi4").Length > 0)
-            throw new PatchException("Hearts of Iron IV is running. Close it and try again.");
+        var exe = Path.GetFullPath(Path.Combine(gameDir, ExeName));
+        foreach (var process in Process.GetProcessesByName("hoi4"))
+        {
+            string? path;
+            try { path = process.MainModule?.FileName; }
+            catch (Exception) { path = null; } // no access: assume it is this game
+            if (path == null || string.Equals(Path.GetFullPath(path), exe, StringComparison.OrdinalIgnoreCase))
+                throw new PatchException("Hearts of Iron IV is running. Close it and try again.");
+        }
     }
 
     private static string? FindGameDir()
